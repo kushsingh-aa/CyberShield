@@ -1,0 +1,66 @@
+[
+  {
+    "key": "upfront_fee",
+    "points": 35,
+    "pattern": "\\b(registration fee|processing fee|training fee|security deposit|refundable deposit|pay(?:ment)? of|pay us|deposit of|fee of|laptop deposit|tool cost|onboarding charge)\\b",
+    "title": "Payment Demand Detected",
+    "detail": "The offer demands or implies an upfront fee, deposit, or payment. Legitimate employers never charge candidates.",
+    "advice": "Never send money to an employer or recruiter. Real companies bear all hiring, onboarding, and training expenses."
+  },
+  {
+    "key": "urgency",
+    "points": 15,
+    "pattern": "\\b(within \\d+ hours?|immediately|urgently|limited slots|act now|today only|last chance|offer expires in|respond before tonight)\\b",
+    "title": "High Urgency & Pressure Language",
+    "detail": "The message uses artificial time pressure to prompt quick action before you can verify its legitimacy.",
+    "advice": "Pause and independently verify the communication through the employer's official website or campus placement cell."
+  },
+  {
+    "key": "guaranteed",
+    "points": 15,
+    "pattern": "\\b(guaranteed (job|placement|internship)|100% placement|no interview required|instant offer|direct selection|selected without interview)\\b",
+    "title": "Unusual Job Guarantee / No Interview",
+    "detail": "The letter promises guaranteed outcomes or skips customary technical and behavioral interviews.",
+    "advice": "Reputable organizations follow rigorous interview stages. Confirm the selection process with company HR."
+  },
+  {
+    "key": "credentials",
+    "points": 20,
+    "pattern": "\\b(otp|one[- ]time password|upi pin|netbanking password|banking credentials|card cvv|atm pin)\\b",
+    "title": "Sensitive Financial Credential Request",
+    "detail": "The communication asks for one-time passwords, PINs, or confidential financial credentials.",
+    "advice": "Never share OTPs, PINs, passwords, or CVV codes under any circumstance."
+  },
+  {
+    "key": "original_documents",
+    "points": 20,
+    "pattern": "\\b(submit original (degree|certificate|marksheets?)|handover original|keep certificates in custody|retention of original)\\b",
+    "title": "Retention of Original Academic Certificates",
+    "detail": "The employer demands custody of your original mark sheets or degrees, which is strictly prohibited by labor & education regulators.",
+    "advice": "Never surrender original academic credentials. Legitimate employers only review photocopies or digital credentials."
+  },
+  {
+    "key": "personal_email",
+    "points": 10,
+    "pattern": "\\b[\\w.+-]+@(gmail\\.com|yahoo\\.com|outlook\\.com|hotmail\\.com|proton\\.me)\\b",
+    "title": "Recruiter Using Free / Personal Email",
+    "detail": "A free personal email address was found in the text rather than a corporate domain.",
+    "advice": "Check whether correspondence originates from an authorized corporate email domain (e.g., name@company.com)."
+  },
+  {
+    "key": "generic_greeting",
+    "points": 5,
+    "pattern": "\\b(dear candidate|dear applicant|congratulations candidate|dear student)\\b",
+    "title": "Generic Recipient Salutation",
+    "detail": "The offer does not address you by your full name or reference your formal application requisition ID.",
+    "advice": "Ensure the letter specifies your full name, position requisition ID, and verified hiring team details."
+  },
+  {
+    "key": "crypto_payment",
+    "points": 20,
+    "pattern": "\\b(crypto|cryptocurrency|gift card|wire transfer|western union|telegram|whatsapp group)\\b.{0,60}\\b(fee|deposit|payment|salary|task)\\b|\\b(fee|deposit|payment|salary|task)\\b.{0,60}\\b(crypto|cryptocurrency|gift card|wire transfer|telegram|whatsapp group)\\b",
+    "title": "Untraceable Payment / Messaging Channel",
+    "detail": "Mentions cryptocurrency, gift cards, or conducting official business exclusively via Telegram/WhatsApp tasks.",
+    "advice": "Corporate employment processes do not use anonymous cryptocurrency or task-based chat groups."
+  }
+]

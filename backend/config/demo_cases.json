@@ -1,0 +1,23 @@
+{
+  "deposit": {
+    "label": "Deposit Demand Fraud",
+    "company": "Apex Global Careers",
+    "sender": "hr.apexglobalcareers@gmail.com",
+    "url": "https://apex-careers.example",
+    "text": "Dear Candidate, Congratulations! You have been shortlisted for a remote AI/ML Internship at Apex Global Careers. No interview required - direct selection based on profile screening! To confirm your slot, transfer a refundable training & laptop security deposit of Rs 2,999 within 24 hours. Send your payment confirmation and bank account details immediately to hr.apexglobalcareers@gmail.com. Hurry, today only 5 slots available!"
+  },
+  "lookalike": {
+    "label": "Lookalike Brand Spoofing",
+    "company": "Microsoft",
+    "sender": "careers@micros0ft-careers.example",
+    "url": "http://micros0ft-careers.example/login-verify",
+    "text": "Dear Applicant, Thank you for expressing interest in software engineering roles at Microsoft. Your profile has cleared round 1. Please click the link to confirm your slot on our recruitment portal: http://micros0ft-careers.example/login-verify. Enter your student login and temporary password within 48 hours."
+  },
+  "safer": {
+    "label": "Lower-Risk Sample Offer",
+    "company": "Infosys",
+    "sender": "recruitment@infosys.com",
+    "url": "https://careers.infosys.com",
+    "text": "Dear Candidate, Thank you for applying for the Systems Engineer Specialist position at Infosys. We would like to invite you for a virtual technical interview on Microsoft Teams. You can view your application status and candidate ID by logging into the official portal: https://careers.infosys.com. Note: Infosys never charges any fee or security deposit at any stage of recruitment."
+  }
+}
