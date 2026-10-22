@@ -62,5 +62,37 @@
     "title": "Untraceable Payment / Messaging Channel",
     "detail": "Mentions cryptocurrency, gift cards, or conducting official business exclusively via Telegram/WhatsApp tasks.",
     "advice": "Corporate employment processes do not use anonymous cryptocurrency or task-based chat groups."
+  },
+  {
+    "key": "upi_payment",
+    "points": 35,
+    "pattern": "\\b(pay(?:ment)?|send|transfer|deposit)\\b.{0,40}\\b(via|through|using|on|to)\\s+(upi|gpay|google pay|phonepe|phone pe|paytm|bhim)\\b|\\bscan (?:the |this |our )?qr(?: code)?\\b|\\b(?:our|this|the|company) upi id\\b",
+    "title": "Payment Requested via UPI / QR Code",
+    "detail": "The message asks you to pay through UPI, a QR code or a payment app. Recruiters never collect money from candidates this way.",
+    "advice": "Do not scan QR codes or send UPI payments to anyone offering a job. Report the UPI ID to your bank and cybercrime.gov.in."
+  },
+  {
+    "key": "informal_channel",
+    "points": 15,
+    "pattern": "\\b(t\\.me/\\S+|join (?:our |the )?(?:telegram|whatsapp)(?: group| channel)?|(?:interview|onboarding|selection) (?:on|via|through) (?:telegram|whatsapp)|contact (?:hr )?on (?:telegram|whatsapp))\\b",
+    "title": "Recruitment via Telegram / WhatsApp",
+    "detail": "The offer moves the hiring process to Telegram or WhatsApp instead of official company email or portals.",
+    "advice": "Insist on communication from an official company email domain and verify the role on the company's careers page."
+  },
+  {
+    "key": "task_scam",
+    "points": 25,
+    "pattern": "\\b(like (?:and|&) subscribe|rate (?:products|hotels|apps|movies)|(?:daily|simple|online) tasks? (?:and|to) earn|prepaid tasks?|commission (?:per|on each) task|earn (?:rs\\.?|inr|₹)\\s?\\d[\\d,]* (?:per|a|daily|every) (?:day|task|hour))\\b",
+    "title": "Task-Based Earning Scheme",
+    "detail": "The 'job' pays for liking videos, rating products or completing paid tasks. These schemes usually ask for a 'prepaid task' deposit later.",
+    "advice": "Genuine internships do not pay per like or per review. Stop engaging before you are asked to deposit money for a task."
+  },
+  {
+    "key": "remote_access",
+    "points": 20,
+    "pattern": "\\b(anydesk|teamviewer|quick ?support|rustdesk|ammyy|install (?:the |this )?(?:screen ?share|remote) (?:app|software))\\b",
+    "title": "Remote-Access Software Requested",
+    "detail": "The message asks you to install remote-access software, which gives the sender control of your device and banking apps.",
+    "advice": "Never install AnyDesk, TeamViewer or similar tools for a job process. Uninstall it if already installed and change your banking passwords."
   }
 ]

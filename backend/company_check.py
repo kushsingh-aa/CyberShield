@@ -1,5 +1,7 @@
 import os
 import re
+import ssl
+import asyncio
 import ipaddress
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -177,24 +179,36 @@ def detect_lookalike(domain: str, claimed_company: str = "") -> dict | None:
 
     return None
 
+def _is_tls_error(exc: BaseException) -> bool:
+    """True when a connection failed because the server's TLS certificate could not be verified."""
+    while exc is not None:
+        if isinstance(exc, ssl.SSLCertVerificationError):
+            return True
+        if "CERTIFICATE_VERIFY_FAILED" in str(exc):
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
 async def check_website_health(domain: str) -> dict:
-    """Checks if the candidate website actually exists and responds over HTTPS."""
+    """Checks if the candidate website responds over HTTPS with a valid (verified) certificate."""
     if not domain or domain in FREE_MAIL_PROVIDERS:
-        return {"live": True, "https": True}
+        return {"live": True, "https": True, "tls_invalid": False}
 
     target_url = f"https://{domain}"
     try:
-        async with httpx.AsyncClient(verify=False, timeout=4.0) as client:
+        async with httpx.AsyncClient(timeout=4.0) as client:
             resp = await client.get(target_url)
-            return {"live": resp.status_code < 500, "https": True, "status": resp.status_code}
-    except Exception:
+            return {"live": resp.status_code < 500, "https": True, "status": resp.status_code, "tls_invalid": False}
+    except Exception as e:
+        if _is_tls_error(e):
+            return {"live": True, "https": True, "status": None, "tls_invalid": True}
         # Try fallback HTTP
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
                 resp = await client.get(f"http://{domain}")
-                return {"live": resp.status_code < 500, "https": False, "status": resp.status_code}
+                return {"live": resp.status_code < 500, "https": False, "status": resp.status_code, "tls_invalid": False}
         except Exception:
-            return {"live": False, "https": False, "status": None}
+            return {"live": False, "https": False, "status": None, "tls_invalid": False}
 
 async def check_google_safe_browsing(url: str) -> bool:
     """Queries Google Safe Browsing API v4 for known malware / phishing links."""
@@ -256,6 +270,23 @@ async def check_company(company: str = "", sender: str = "", url: str = "") -> d
     url_domain = clean_domain(url)
     primary_domain = url_domain or sender_domain
 
+    target_for_age = url_domain or (sender_domain if sender_domain not in FREE_MAIL_PROVIDERS else "")
+    check_dns = bool(sender_domain and sender_domain not in FREE_MAIL_PROVIDERS)
+    # The TLS check must hit the exact host in the link (e.g. portal.example.com), not just the registered domain
+    url_host = (urlparse(url if "://" in url else f"https://{url}").hostname or "").lower() if url else ""
+
+    async def _none():
+        return None
+
+    # Network lookups run concurrently; DNS uses a blocking resolver so it runs in a worker thread
+    age_days, dns_status, health, is_malicious, is_vt_flagged = await asyncio.gather(
+        get_domain_age_days(target_for_age) if target_for_age else _none(),
+        asyncio.to_thread(check_email_dns, sender_domain) if check_dns else _none(),
+        check_website_health(url_host) if url_host else _none(),
+        check_google_safe_browsing(url) if url else _none(),
+        check_virustotal(url) if url else _none(),
+    )
+
     # 1. Sender domain checks
     if sender_domain in FREE_MAIL_PROVIDERS:
         evidence.append({
@@ -294,9 +325,7 @@ async def check_company(company: str = "", sender: str = "", url: str = "") -> d
             break
 
     # 4. Domain Age (RDAP)
-    target_for_age = url_domain or (sender_domain if sender_domain not in FREE_MAIL_PROVIDERS else "")
     if target_for_age:
-        age_days = await get_domain_age_days(target_for_age)
         if age_days is not None:
             if age_days < 60:
                 evidence.append({
@@ -318,8 +347,7 @@ async def check_company(company: str = "", sender: str = "", url: str = "") -> d
                 })
 
     # 5. Email DNS (MX & SPF)
-    if sender_domain and sender_domain not in FREE_MAIL_PROVIDERS:
-        dns_status = check_email_dns(sender_domain)
+    if dns_status:
         if dns_status["tested"]:
             if not dns_status["has_mx"]:
                 evidence.append({
@@ -366,8 +394,18 @@ async def check_company(company: str = "", sender: str = "", url: str = "") -> d
         except ValueError:
             pass
 
-        # 7. Google Safe Browsing
-        is_malicious = await check_google_safe_browsing(url)
+        # 7. Invalid TLS certificate
+        if health and health.get("tls_invalid"):
+            evidence.append({
+                "source": "Company & Domain Intelligence",
+                "key": "invalid_tls_certificate",
+                "points": 15,
+                "title": "Invalid HTTPS Certificate",
+                "detail": f"The site '{url_host}' presents a TLS certificate that could not be verified (expired, self-signed, or issued for another domain).",
+                "advice": "Do not enter credentials or documents on a site with a certificate warning. Genuine company portals have valid certificates."
+            })
+
+        # 8. Google Safe Browsing
         if is_malicious:
             evidence.append({
                 "source": "Company & Domain Intelligence",
@@ -378,8 +416,7 @@ async def check_company(company: str = "", sender: str = "", url: str = "") -> d
                 "advice": "Do not click or interact with this link. Block the sender immediately."
             })
 
-        # 8. VirusTotal URL Reputation Check
-        is_vt_flagged = await check_virustotal(url)
+        # 9. VirusTotal URL Reputation Check
         if is_vt_flagged:
             evidence.append({
                 "source": "Company & Domain Intelligence",

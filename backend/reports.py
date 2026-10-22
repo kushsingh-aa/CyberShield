@@ -8,7 +8,17 @@ logger = logging.getLogger("reports")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-LOCAL_DB_PATH = os.path.join(os.path.dirname(__file__), "cybershield_local.db")
+LOCAL_DB_PATH = os.getenv("CYBERSHIELD_DB_PATH") or os.path.join(os.path.dirname(__file__), "cybershield_local.db")
+
+_supabase_client = None
+
+def _supabase():
+    """Returns a cached Supabase client (created once per process)."""
+    global _supabase_client
+    if _supabase_client is None:
+        from supabase import create_client
+        _supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    return _supabase_client
 
 def init_local_db():
     """Initializes local SQLite database for development / offline environments."""
@@ -44,8 +54,7 @@ async def find_reports(company: str = "", sender: str = "", url: str = "") -> di
     # 1. Supabase Postgres check
     if SUPABASE_URL and SUPABASE_KEY:
         try:
-            from supabase import create_client
-            supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+            supabase = _supabase()
             # Query by domain
             if domain:
                 res = supabase.table("reports").select("id, user_id, company, domain, pattern, status").eq("domain", domain).execute()
@@ -80,7 +89,8 @@ async def find_reports(company: str = "", sender: str = "", url: str = "") -> di
                 if matched:
                     reports.append(r_dict)
 
-    # Calculate independent reporting users
+    # Calculate independent reporters. `user_id` holds a server-derived reporter
+    # fingerprint (see main.reporter_fingerprint), never a value the client chose.
     unique_users = set()
     for r in reports:
         uid = r.get("user_id") or f"anon_{r.get('id')}"
@@ -105,15 +115,31 @@ async def find_reports(company: str = "", sender: str = "", url: str = "") -> di
         "evidence": evidence
     }
 
-async def save_report(company: str, domain: str, pattern: str, details: str, user_id: str = "anonymous") -> dict:
-    """Saves a new student fraud report to Supabase or local SQLite."""
+def _is_duplicate(rows: list, company: str, domain: str) -> bool:
+    """A reporter may flag the same company / domain only once."""
+    company_l = company.strip().lower()
+    domain_l = domain.strip().lower()
+    for r in rows:
+        if domain_l and (r.get("domain") or "").strip().lower() == domain_l:
+            return True
+        if fuzz.token_sort_ratio(company_l, (r.get("company") or "").strip().lower()) >= 90:
+            return True
+    return False
+
+async def save_report(company: str, domain: str, pattern: str, details: str, user_id: str) -> dict:
+    """Saves a new student fraud report to Supabase or local SQLite.
+
+    Returns {"ok": False, "duplicate": True} when this reporter already flagged the entity.
+    """
     now_iso = datetime.now(timezone.utc).isoformat()
     
     # Try Supabase if configured
     if SUPABASE_URL and SUPABASE_KEY:
         try:
-            from supabase import create_client
-            supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+            supabase = _supabase()
+            prior = supabase.table("reports").select("company, domain").eq("user_id", user_id).execute()
+            if _is_duplicate(prior.data or [], company, domain):
+                return {"ok": False, "duplicate": True}
             data = {
                 "user_id": user_id,
                 "company": company,
@@ -130,6 +156,12 @@ async def save_report(company: str, domain: str, pattern: str, details: str, use
 
     # Local SQLite
     with sqlite3.connect(LOCAL_DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        prior = [dict(r) for r in conn.execute(
+            "SELECT company, domain FROM student_reports WHERE user_id = ?", (user_id,)
+        ).fetchall()]
+        if _is_duplicate(prior, company, domain):
+            return {"ok": False, "duplicate": True}
         conn.execute(
             "INSERT INTO student_reports (user_id, company, domain, pattern, details, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (user_id, company, domain, pattern, details, "unverified", now_iso)

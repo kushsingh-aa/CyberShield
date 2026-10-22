@@ -2,7 +2,8 @@ import re
 import os
 import json
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+from pydantic import BaseModel, ValidationError
 from pathlib import Path
 
 logger = logging.getLogger("letter_check")
@@ -56,6 +57,9 @@ def _load_rules():
 
 RULES = _load_rules()
 
+# Rule keys that count as a demand for money (triggers the high-risk override)
+FEE_RULE_KEYS = {"upfront_fee", "upi_payment"}
+
 def run_regex_rules(text: str) -> dict:
     """Executes fallback rule-based pattern matching on offer letter text."""
     evidence = []
@@ -63,9 +67,19 @@ def run_regex_rules(text: str) -> dict:
     seen = set()
 
     for key, pts, pattern, title, detail, advice in RULES:
-        if re.search(pattern, text, re.I | re.S) and key not in seen:
+        if key in seen:
+            continue
+        found = re.finditer(pattern, text, re.I | re.S)
+        matches = []
+        for m in found:
+            phrase = m.group(0).strip()
+            if phrase and phrase.lower() not in (p.lower() for p in matches):
+                matches.append(phrase)
+            if len(matches) >= 5:
+                break
+        if matches:
             seen.add(key)
-            if key == "upfront_fee":
+            if key in FEE_RULE_KEYS:
                 fees_demanded = True
             evidence.append({
                 "source": "Letter Analysis (Rules)",
@@ -73,7 +87,8 @@ def run_regex_rules(text: str) -> dict:
                 "points": pts,
                 "title": title,
                 "detail": detail,
-                "advice": advice
+                "advice": advice,
+                "matches": matches
             })
 
     return {
@@ -113,8 +128,60 @@ SYSTEM_PROMPT = (
     "}"
 )
 
+class LLMFindings(BaseModel):
+    """Schema every AI provider's answer is validated against."""
+    fees_demanded: bool
+    fee_details: str
+    original_documents: bool
+    original_doc_details: str
+    no_interview: bool
+    no_interview_details: str
+    urgency: bool
+    urgency_details: str
+    credential_request: bool
+    credential_details: str
+    informal_channel: bool
+    informal_channel_details: str
+    suspicious_clauses: List[str]
+    fake_looking_details: List[str]
+    confidence: float
+    summary_reasoning: str
+
+
+_FINDING_DEFAULTS = {
+    name: ([] if field.annotation == List[str] else 0.0 if field.annotation is float else "" if field.annotation is str else False)
+    for name, field in LLMFindings.model_fields.items()
+}
+
+
+def _parse_findings(raw: str) -> Optional[dict]:
+    """Extracts and validates a JSON object from free-form model text. Returns None if invalid."""
+    clean = re.sub(r"^```(?:json)?\s*|\s*```$", "", (raw or "").strip(), flags=re.MULTILINE)
+    m = re.search(r"\{.*\}", clean, re.DOTALL)
+    if m:
+        clean = m.group(0)
+    try:
+        data = json.loads(clean)
+        if not isinstance(data, dict):
+            return None
+        merged = {**_FINDING_DEFAULTS, **{k: v for k, v in data.items() if v is not None}}
+        return LLMFindings.model_validate(merged).model_dump()
+    except (ValueError, ValidationError) as e:
+        logger.warning(f"AI response failed schema validation: {e}")
+        return None
+
+
+GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"]
+CLAUDE_MODEL = "claude-opus-5-5"
+OPENROUTER_MODELS = [
+    "minimax/minimax-m3.1-flash:free",
+    "google/gemma-4-31b-it:free",
+    "google/gemma-4-26b-a4b-it:free"
+]
+
+
 async def _gemini_check(text: str, api_key: str) -> Optional[dict]:
-    """Runs semantic fraud analysis via Google Gemini API."""
+    """Runs semantic fraud analysis via Google Gemini API (non-blocking async client)."""
     try:
         from google import genai
         from google.genai import types
@@ -123,19 +190,19 @@ async def _gemini_check(text: str, api_key: str) -> Optional[dict]:
         config = types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
             response_mime_type="application/json",
+            response_schema=LLMFindings,
             temperature=0.1
         )
 
-        for model_name in ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"]:
+        for model_name in GEMINI_MODELS:
             try:
-                response = client.models.generate_content(
+                response = await client.aio.models.generate_content(
                     model=model_name,
                     contents=f"Analyze this internship / job offer text:\n\n{text[:10000]}",
                     config=config
                 )
-                if response and response.text:
-                    clean_json = re.sub(r"^```(?:json)?\s*|\s*```$", "", response.text.strip(), flags=re.MULTILINE)
-                    data = json.loads(clean_json)
+                data = _parse_findings(response.text if response else "")
+                if data:
                     data["model"] = f"Gemini ({model_name})"
                     return data
             except Exception as e:
@@ -145,27 +212,34 @@ async def _gemini_check(text: str, api_key: str) -> Optional[dict]:
         logger.warning(f"Gemini initialization/execution error: {e}")
     return None
 
+
 async def _claude_check(text: str, api_key: str) -> Optional[dict]:
-    """Runs semantic fraud analysis via Anthropic Claude API."""
+    """Runs semantic fraud analysis via Anthropic Claude with schema-validated structured output."""
     try:
         import anthropic
         client = anthropic.AsyncAnthropic(api_key=api_key)
 
-        response = await client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=1000,
+        response = await client.beta.messages.parse(
+            model=CLAUDE_MODEL,
+            max_tokens=16000,
+            betas=["server-side-fallback-2026-07-01"],
+            fallbacks="default",
             system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": text[:10000]}]
+            messages=[{"role": "user", "content": f"Analyze this internship / job offer text:\n\n{text[:10000]}"}],
+            output_format=LLMFindings,
         )
 
-        content_text = response.content[0].text
-        clean_json = re.sub(r"^```(?:json)?\s*|\s*```$", "", content_text.strip(), flags=re.MULTILINE)
-        data = json.loads(clean_json)
-        data["model"] = "Claude (3.5 Sonnet)"
+        if response.stop_reason == "refusal" or response.parsed_output is None:
+            logger.warning(f"Claude returned no structured output (stop_reason={response.stop_reason})")
+            return None
+
+        data = response.parsed_output.model_dump()
+        data["model"] = f"Claude ({response.model})"
         return data
     except Exception as e:
         logger.warning(f"Claude API check failed: {e}")
     return None
+
 
 async def _openrouter_check(text: str, api_key: str) -> Optional[dict]:
     """Runs semantic fraud analysis via OpenRouter API."""
@@ -175,13 +249,8 @@ async def _openrouter_check(text: str, api_key: str) -> Optional[dict]:
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
-        models = [
-            "minimax/minimax-m3.1-flash:free",
-            "google/gemma-4-31b-it:free",
-            "google/gemma-4-26b-a4b-it:free"
-        ]
         async with httpx.AsyncClient(timeout=25.0) as client:
-            for model_name in models:
+            for model_name in OPENROUTER_MODELS:
                 try:
                     resp = await client.post(
                         "https://openrouter.ai/api/v1/chat/completions",
@@ -196,14 +265,10 @@ async def _openrouter_check(text: str, api_key: str) -> Optional[dict]:
                         }
                     )
                     if resp.status_code == 200:
-                        raw = resp.json()["choices"][0]["message"]["content"]
-                        clean_json = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.MULTILINE)
-                        m = re.search(r"\{.*\}", clean_json, re.DOTALL)
-                        if m:
-                            clean_json = m.group(0)
-                        data = json.loads(clean_json)
-                        data["model"] = f"OpenRouter ({model_name.split('/')[0]})"
-                        return data
+                        data = _parse_findings(resp.json()["choices"][0]["message"]["content"])
+                        if data:
+                            data["model"] = f"OpenRouter ({model_name.split('/')[0]})"
+                            return data
                 except Exception as e:
                     logger.warning(f"OpenRouter {model_name} attempt failed: {e}")
                     continue
@@ -211,10 +276,26 @@ async def _openrouter_check(text: str, api_key: str) -> Optional[dict]:
         logger.warning(f"OpenRouter initialization/execution error: {e}")
     return None
 
-async def llm_check(text: str) -> dict | None:
+
+def _provider_for_key(key: str):
+    """Picks the provider a key belongs to from its prefix."""
+    if key.startswith("sk-or-v1-"):
+        return _openrouter_check
+    if key.startswith("sk-ant-"):
+        return _claude_check
+    return _gemini_check
+
+
+async def llm_check(text: str, api_key: Optional[str] = None) -> dict | None:
     """
     Zero-dataset AI Semantic Analysis: Calls OpenRouter, Gemini, or Claude.
+    A per-request `api_key` (supplied by the user) is used for this call only and is
+    never written to the process environment, so it cannot leak into other requests.
     """
+    if api_key and api_key.strip():
+        key = api_key.strip()
+        return await _provider_for_key(key)(text, key)
+
     key = os.getenv("OPENROUTER_API_KEY") or os.getenv("GEMINI_API_KEY")
     if key and key.startswith("sk-or-v1-"):
         res = await _openrouter_check(text, key)
@@ -235,10 +316,10 @@ async def llm_check(text: str) -> dict | None:
 
     return None
 
-async def analyze_letter(text: str) -> dict:
+async def analyze_letter(text: str, api_key: Optional[str] = None) -> dict:
     """Combines zero-dataset LLM semantic validation with fallback rules."""
     rule_results = run_regex_rules(text)
-    llm_results = await llm_check(text)
+    llm_results = await llm_check(text, api_key=api_key)
 
     evidence = list(rule_results["evidence"])
     fees_flag = rule_results["fees_demanded"]
@@ -293,7 +374,7 @@ async def analyze_letter(text: str) -> dict:
             })
 
         # 5. Sensitive Credential Harvesting
-        if llm_results.get("credential_request"):
+        if llm_results.get("credential_request") and not any(e["key"] == "credentials" for e in evidence):
             evidence.append({
                 "source": source_label,
                 "key": "ai_credential_harvesting",
@@ -304,7 +385,7 @@ async def analyze_letter(text: str) -> dict:
             })
 
         # 6. Informal Recruitment Channels
-        if llm_results.get("informal_channel"):
+        if llm_results.get("informal_channel") and not any(e["key"] == "informal_channel" for e in evidence):
             evidence.append({
                 "source": source_label,
                 "key": "ai_informal_channel",

@@ -10,6 +10,16 @@ try:
 except ImportError:
     HAS_PYTESSERACT = False
 
+_OCR_ENGINE = None
+
+def _ocr_engine():
+    """Loads the RapidOCR model once per process (loading it is slow)."""
+    global _OCR_ENGINE
+    if _OCR_ENGINE is None:
+        from rapidocr_onnxruntime import RapidOCR
+        _OCR_ENGINE = RapidOCR()
+    return _OCR_ENGINE
+
 async def extract_text(file) -> str:
     """
     Extracts text from uploaded documents (PDF, TXT, DOCX, Markdown, or images).
@@ -84,9 +94,8 @@ async def extract_text(file) -> str:
 
         # Stage 4: Scanned PDF OCR via RapidOCR
         try:
-            from rapidocr_onnxruntime import RapidOCR
             import numpy as np
-            ocr = RapidOCR()
+            ocr = _ocr_engine()
             with pdfplumber.open(BytesIO(data)) as pdf:
                 ocr_pages = []
                 for p in pdf.pages[:10]:
@@ -106,13 +115,12 @@ async def extract_text(file) -> str:
     # Image formats (.png, .jpg, .jpeg, .webp, .bmp)
     if name.endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff")):
         try:
-            from rapidocr_onnxruntime import RapidOCR
             from PIL import Image
             import numpy as np
             img = Image.open(BytesIO(data))
             if img.mode != 'RGB':
                 img = img.convert('RGB')
-            ocr = RapidOCR()
+            ocr = _ocr_engine()
             res, _ = ocr(np.array(img))
             if res:
                 return '\n'.join([l[1] for l in res]).strip()

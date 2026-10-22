@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import os
 import uuid
@@ -17,6 +18,7 @@ from letter_check import analyze_letter
 from company_check import check_company
 from reports import find_reports, save_report, LOCAL_DB_PATH
 from scoring import build_score
+from store import save_check, get_check, list_checks, check_stats
 import sqlite3
 
 # Centralized config directory
@@ -33,12 +35,13 @@ app = FastAPI(title="CyberShield Fraud Intelligence Engine", version="2.0.0")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS configuration for Next.js frontend
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+# CORS configuration for Next.js frontend. Only the listed origins may call the API;
+# no cookies are used, so credentials stay disabled.
+CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS + ["*"],
-    allow_credentials=True,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -49,8 +52,19 @@ DEMO_CASES: dict = _load_json("demo_cases.json")
 # Load report pattern types from external config file
 REPORT_PATTERNS: list = _load_json("report_patterns.json")
 
-# In-memory storage for recently analyzed checks (accessible via /api/result/{id})
-CHECK_STORE: dict[str, dict] = {}
+# Salt for hashing reporter identities; set REPORT_SALT in production
+REPORT_SALT = os.getenv("REPORT_SALT", "cybershield-local-salt")
+
+def reporter_fingerprint(request: Request) -> str:
+    """Derives a stable, non-reversible reporter id from the client IP and user agent.
+
+    The client cannot choose this value, so one person cannot pose as several
+    "independent" reporters just by changing a field in the request body.
+    """
+    ip = get_remote_address(request) or "unknown"
+    ua = request.headers.get("user-agent", "")
+    digest = hashlib.sha256(f"{REPORT_SALT}|{ip}|{ua}".encode()).hexdigest()[:16]
+    return f"fp_{digest}"
 
 @app.get("/")
 async def root():
@@ -88,9 +102,8 @@ async def check_offer(
     url: str = Form(""),
     api_key: Optional[str] = Form(None)
 ):
-    key = api_key or request.headers.get("x-gemini-key") or request.headers.get("x-api-key")
-    if key:
-        os.environ["GEMINI_API_KEY"] = key.strip()
+    # The user's key is passed down for this request only; it is never stored in os.environ
+    key = (api_key or request.headers.get("x-gemini-key") or request.headers.get("x-api-key") or "").strip() or None
 
     pasted_text = (text or "").strip()
     doc_text = ""
@@ -118,7 +131,7 @@ async def check_offer(
     sanitized_text = redact(extracted_text)
 
     # Step 2: Parallel execution of 3 intelligence checks
-    letter_task = analyze_letter(sanitized_text)
+    letter_task = analyze_letter(sanitized_text, api_key=key)
     company_task = check_company(company=company, sender=sender, url=url)
     reports_task = find_reports(company=company, sender=sender, url=url)
 
@@ -139,29 +152,22 @@ async def check_offer(
         **scored
     }
 
-    # Store in memory for direct result permalinks
-    CHECK_STORE[check_id] = result_payload
-
-    # Also log to local SQLite stats
-    try:
-        with sqlite3.connect(LOCAL_DB_PATH) as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS audit_checks (id TEXT PRIMARY KEY, score INT, level TEXT, created_at TEXT)"
-            )
-            conn.execute(
-                "INSERT OR REPLACE INTO audit_checks (id, score, level, created_at) VALUES (?, ?, ?, ?)",
-                (check_id, scored["score"], scored["level"], datetime.now(timezone.utc).isoformat())
-            )
-    except Exception:
-        pass
+    # Persist so result permalinks survive backend restarts
+    save_check(result_payload)
 
     return result_payload
 
 @app.get("/api/result/{check_id}")
 async def get_check_result(check_id: str):
-    if check_id not in CHECK_STORE:
+    result = get_check(check_id)
+    if not result:
         raise HTTPException(status_code=404, detail="Check result expired or not found")
-    return CHECK_STORE[check_id]
+    return result
+
+@app.get("/api/history")
+async def get_history(limit: int = 50):
+    """Recent real checks (demo runs excluded), newest first."""
+    return list_checks(max(1, min(limit, 200)))
 
 @app.get("/api/demo/{case}")
 async def run_demo(case: str):
@@ -186,7 +192,7 @@ async def run_demo(case: str):
         "sanitized_preview": sanitized_text,
         **scored
     }
-    CHECK_STORE[check_id] = payload
+    save_check(payload, is_demo=True)
     return payload
 
 @app.get("/api/patterns")
@@ -209,19 +215,24 @@ async def get_demo_cases():
     ]
 
 @app.post("/api/report")
-@limiter.limit("20/minute")
+@limiter.limit("5/minute;30/day")
 async def submit_report(request: Request):
     data = await request.json()
-    company = (data.get("company") or "").strip()
-    domain = (data.get("domain") or "").strip()
-    pattern = (data.get("pattern") or "").strip()
-    details = (data.get("details") or "").strip()
-    user_id = data.get("user_id") or "student_verified"
+    company = (data.get("company") or "").strip()[:120]
+    domain = (data.get("domain") or "").strip()[:200]
+    pattern = (data.get("pattern") or "").strip()[:120]
+    details = (data.get("details") or "").strip()[:2000]
 
     if not company or not pattern:
         raise HTTPException(status_code=400, detail="Company name and scam pattern are required.")
 
-    res = await save_report(company=company, domain=domain, pattern=pattern, details=details, user_id=user_id)
+    # Any client-supplied user_id is ignored; identity comes from the request itself
+    res = await save_report(
+        company=company, domain=domain, pattern=pattern, details=redact(details),
+        user_id=reporter_fingerprint(request)
+    )
+    if res.get("duplicate"):
+        raise HTTPException(status_code=409, detail="You have already reported this company or domain.")
     return {
         "ok": True,
         "message": "Report recorded as UNVERIFIED student intelligence.",
@@ -240,32 +251,15 @@ async def list_reports():
 
 @app.get("/api/stats")
 async def get_stats():
-    checks_count = 0
-    avg_score = 0
-    high_count = 0
     reports_count = 0
-
     try:
         with sqlite3.connect(LOCAL_DB_PATH) as conn:
-            c_row = conn.execute("SELECT COUNT(*), COALESCE(AVG(score), 0) FROM audit_checks").fetchone()
-            if c_row:
-                checks_count = c_row[0]
-                avg_score = round(c_row[1], 1)
-            h_row = conn.execute("SELECT COUNT(*) FROM audit_checks WHERE level='high'").fetchone()
-            if h_row:
-                high_count = h_row[0]
-            r_row = conn.execute("SELECT COUNT(*) FROM student_reports").fetchone()
-            if r_row:
-                reports_count = r_row[0]
+            reports_count = conn.execute("SELECT COUNT(*) FROM student_reports").fetchone()[0]
     except Exception:
         pass
 
-    return {
-        "total_checks": checks_count + len(CHECK_STORE),
-        "avg_risk_score": avg_score,
-        "high_risk_flagged": high_count,
-        "community_reports": reports_count
-    }
+    # Each real check is stored exactly once in the checks table, so nothing is double-counted
+    return {**check_stats(), "community_reports": reports_count}
 
 if __name__ == "__main__":
     import uvicorn
