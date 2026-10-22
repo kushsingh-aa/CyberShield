@@ -1,79 +1,73 @@
-import React from "react";
+"use client";
 
-interface EvidenceItem {
-  source: string;
-  key: string;
-  points: number;
-  title: string;
-  detail: string;
-  advice: string;
+import React, { useState } from "react";
+import { ChevronDown } from "lucide-react";
+import type { EvidenceItem } from "@/lib/api";
+
+function severity(points: number) {
+  if (points >= 20) return { dot: "bg-[var(--red)]", pill: "pill-red" };
+  if (points >= 10) return { dot: "bg-[var(--amber)]", pill: "pill-amber" };
+  return { dot: "bg-[var(--green)]", pill: "pill-green" };
 }
 
-interface EvidenceListProps {
-  evidence: EvidenceItem[];
-}
+export default function EvidenceList({ evidence }: { evidence: EvidenceItem[] }) {
+  const [open, setOpen] = useState<number | null>(0);
 
-export default function EvidenceList({ evidence }: EvidenceListProps) {
   if (!evidence || evidence.length === 0) {
     return (
-      <div className="border border-[#2b3b45] rounded-[7px] bg-[#111f28] p-4 text-center text-[#91a3ac] text-[10px]">
+      <div className="rounded-[16px] bg-[var(--field)] p-6 text-center text-[13px] text-[var(--muted)]">
         No configured red flags found in this sample.
       </div>
     );
   }
 
   return (
-    <div className="space-y-2">
+    <ul className="divide-y divide-[var(--line)]">
       {evidence.map((item, idx) => {
-        let iconBg = "bg-[#18342e] text-[#56ecc0]";
-        let pointColor = "text-[#56ecc0]";
-        let iconChar = "✓";
-
-        if (item.points >= 20) {
-          iconBg = "bg-[#43262e] text-[#ff8492]";
-          pointColor = "text-[#ff8492]";
-          iconChar = "!";
-        } else if (item.points >= 10) {
-          iconBg = "bg-[#3b331f] text-[#f3c46c]";
-          pointColor = "text-[#f3c46c]";
-          iconChar = "⌁";
-        }
-
+        const s = severity(item.points);
+        const isOpen = open === idx;
         return (
-          <div
-            key={idx}
-            className="border border-[#2b3b45] rounded-[7px] bg-[#111f28] overflow-hidden"
-          >
-            <div className="flex gap-2.5 p-2.5 items-start">
-              <div className={`w-[25px] h-[25px] grid place-items-center rounded-[6px] shrink-0 font-bold text-xs ${iconBg}`}>
-                {iconChar}
-              </div>
-
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-2">
-                  <b className="block text-[11px] text-[#eef6f7] font-semibold">
-                    {item.title}
-                  </b>
-                  <span className={`font-mono-code text-[9px] font-bold ${pointColor} shrink-0`}>
-                    +{item.points} pts
-                  </span>
-                </div>
-
-                <p className="text-[10px] text-[#91a3ac] leading-[1.6] mt-1 mb-0">
-                  {item.detail}
-                </p>
-              </div>
-            </div>
-
-            {item.advice && (
-              <div className="px-3 py-2 pl-[44px] border-t border-[#283943] bg-[#0d171f] text-[#b7c8ce] text-[9.5px] leading-[1.6]">
-                <b className="text-[#56ecc0] font-semibold mr-1">Recommended next step:</b>
-                <span>{item.advice}</span>
+          <li key={idx}>
+            <button
+              type="button"
+              onClick={() => setOpen(isOpen ? null : idx)}
+              className="w-full flex items-center gap-3 py-3.5 text-left group"
+              aria-expanded={isOpen}
+            >
+              <span className={`w-2 h-2 rounded-full shrink-0 ${s.dot}`} />
+              <span className="flex-1 min-w-0">
+                <span className="block text-[14px] font-medium text-[var(--ink)] truncate">{item.title}</span>
+                <span className="block text-[12px] text-[var(--muted)] truncate">{item.source}</span>
+              </span>
+              <span className={`pill ${s.pill} tnum`}>+{item.points}</span>
+              <ChevronDown
+                className={`w-4 h-4 text-[var(--muted)] transition-transform ${isOpen ? "rotate-180" : ""}`}
+              />
+            </button>
+            {isOpen && (
+              <div className="pl-5 pb-4 pr-2 space-y-2.5 fade-up">
+                <p className="text-[13px] leading-relaxed text-[var(--ink-2)]">{item.detail}</p>
+                {item.matches && item.matches.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[12px] text-[var(--muted)]">Found in text:</span>
+                    {item.matches.map((m) => (
+                      <span key={m} className="pill pill-gray !text-[11.5px] font-mono-code">
+                        “{m}”
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {item.advice && (
+                  <p className="text-[12.5px] leading-relaxed rounded-[12px] bg-[var(--blue-soft)] text-[var(--blue-fg)] px-3 py-2">
+                    <span className="font-medium">Next step · </span>
+                    {item.advice}
+                  </p>
+                )}
               </div>
             )}
-          </div>
+          </li>
         );
       })}
-    </div>
+    </ul>
   );
 }

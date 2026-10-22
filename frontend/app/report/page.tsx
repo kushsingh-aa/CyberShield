@@ -1,6 +1,9 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { RotateCw, ShieldAlert, ArrowUp, Globe } from "lucide-react";
+import DotMatrix from "@/components/DotMatrix";
+import { API_URL } from "@/lib/api";
 
 interface StudentReport {
   id: number;
@@ -12,9 +15,18 @@ interface StudentReport {
   created_at: string;
 }
 
+const FALLBACK_PATTERNS = [
+  "Upfront payment demand",
+  "Suspicious link or lookalike domain",
+  "Credential / sensitive data request",
+  "Fake interview or guaranteed job",
+  "Impersonation concern",
+  "Other suspicious pattern",
+];
+
 export default function CommunityReportPage() {
   const [reports, setReports] = useState<StudentReport[]>([]);
-  const [patterns, setPatterns] = useState<string[]>([]);
+  const [patterns, setPatterns] = useState<string[]>(FALLBACK_PATTERNS);
   const [loading, setLoading] = useState(true);
 
   // Form
@@ -22,18 +34,14 @@ export default function CommunityReportPage() {
   const [domain, setDomain] = useState("");
   const [pattern, setPattern] = useState("");
   const [details, setDetails] = useState("");
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const apiUrl = process.env.NEXT_PUBLIC_API || "http://127.0.0.1:8000";
-
   const fetchReports = async () => {
+    setLoading(true);
     try {
-      const res = await fetch(`${apiUrl}/api/reports`);
-      if (res.ok) {
-        const data = await res.json();
-        setReports(data);
-      }
+      const res = await fetch(`${API_URL}/api/reports`);
+      if (res.ok) setReports(await res.json());
     } catch {
       // ignore
     } finally {
@@ -41,246 +49,223 @@ export default function CommunityReportPage() {
     }
   };
 
-  const fetchPatterns = async () => {
-    try {
-      const res = await fetch(`${apiUrl}/api/patterns`);
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          setPatterns(data);
-        }
-      }
-    } catch {
-      // ignore
-    }
-  };
-
   useEffect(() => {
     fetchReports();
-    fetchPatterns();
+    fetch(`${API_URL}/api/patterns`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => Array.isArray(data) && data.length > 0 && setPatterns(data))
+      .catch(() => {});
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setMessage("");
+    setMessage(null);
 
     if (!company.trim() || !pattern.trim()) {
-      setMessage("Company name and pattern type are required.");
+      setMessage({ ok: false, text: "Company name and pattern type are required." });
       return;
     }
 
     setSubmitting(true);
     try {
-      const res = await fetch(`${apiUrl}/api/report`, {
+      const res = await fetch(`${API_URL}/api/report`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ company, domain, pattern, details, user_id: "student_verified" })
+        body: JSON.stringify({ company, domain, pattern, details }),
       });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || (res.status === 429 ? "Too many reports. Try again later." : "Submission failed"));
+      }
 
-      if (!res.ok) throw new Error("Submission failed");
-
-      setMessage("Report saved locally as UNVERIFIED. It is not treated as a proven allegation.");
+      setMessage({ ok: true, text: "Saved as UNVERIFIED. It is not treated as a proven allegation." });
       setCompany("");
       setDomain("");
       setPattern("");
       setDetails("");
       fetchReports();
-    } catch (err: any) {
-      setMessage(err.message || "Failed to submit report.");
+    } catch (err) {
+      setMessage({ ok: false, text: err instanceof Error ? err.message : "Failed to submit report." });
     } finally {
       setSubmitting(false);
     }
   };
 
+  const patternCounts = reports.reduce<Record<string, number>>((acc, r) => {
+    acc[r.pattern] = (acc[r.pattern] || 0) + 1;
+    return acc;
+  }, {});
+  const topPattern = Object.entries(patternCounts).sort((a, b) => b[1] - a[1])[0];
+
   return (
-    <div className="space-y-5">
-      {/* Section Hero */}
-      <div className="py-4">
-        <div className="kicker-label text-[#56ecc0] mb-1">
-          03 / COMMUNITY INTELLIGENCE
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-4 pb-2">
+        <h1 className="page-title">Reports</h1>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="chip">
+            <ShieldAlert className="w-3.5 h-3.5 text-[var(--amber)]" />
+            Community signals are unverified
+          </span>
+          <button type="button" onClick={fetchReports} className="chip">
+            <RotateCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
         </div>
-        <h1 className="text-[28px] sm:text-[32px] font-extrabold leading-[1.16] tracking-[-1.5px] my-2 text-[#eef6f7]">
-          Patterns are stronger<br />
-          <em className="text-[#56ecc0] not-italic">when we share signals.</em>
-        </h1>
-        <p className="text-[11px] leading-[1.8] text-[#9badb5] max-w-[680px] m-0">
-          Submit a suspicious recruitment pattern to the local database. Reports are unverified and are not proof of wrongdoing.
-        </p>
       </div>
 
-      {/* 2-Columns */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-        {/* Left Column: Submit */}
-        <div className="bg-[#111b25] border border-[#263640] rounded-[10px] p-5">
-          <div className="mb-4">
-            <small className="font-mono-code text-[9px] tracking-[1.2px] text-[#718d98] block">
-              SUBMIT A SIGNAL
-            </small>
-            <h2 className="text-[16px] font-bold text-[#eef6f7] mt-1 mb-0.5 tracking-tight">
-              Report a suspicious offer
-            </h2>
-            <p className="text-[10px] text-[#879ba4] leading-[1.6] m-0">
-              Share only information you are comfortable storing locally.
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="card">
+          <h2 className="card-title">Total Reports</h2>
+          <div className="mt-4 flex items-end justify-between gap-3">
+            <span className="big-num text-[52px]">{reports.length}</span>
+            <DotMatrix count={reports.length} tone="blue" cols={11} rows={5} />
+          </div>
+        </div>
+        <div className="card">
+          <h2 className="card-title">Most Reported Pattern</h2>
+          <div className="mt-4">
+            <div className="text-[22px] tracking-tight leading-tight">{topPattern ? topPattern[0] : "—"}</div>
+            <div className="eyebrow mt-2">{topPattern ? `${topPattern[1]} report${topPattern[1] > 1 ? "s" : ""}` : "No reports yet"}</div>
+          </div>
+        </div>
+        <div className="card">
+          <h2 className="card-title">Distinct Organisations</h2>
+          <div className="mt-4 flex items-end justify-between gap-3">
+            <span className="big-num text-[52px]">{new Set(reports.map((r) => r.company.toLowerCase())).size}</span>
+            <DotMatrix count={new Set(reports.map((r) => r.company.toLowerCase())).size} tone="green" cols={11} rows={5} />
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+        <form onSubmit={handleSubmit} className="card lg:col-span-5 space-y-4">
+          <div>
+            <h2 className="card-title">Report a Suspicious Offer</h2>
+            <p className="eyebrow mt-1">Share only what you are comfortable storing locally.</p>
+          </div>
+
+          <div>
+            <label className="field-label">Company / project name *</label>
+            <input
+              type="text"
+              required
+              value={company}
+              onChange={(e) => setCompany(e.target.value)}
+              placeholder="Name shown in the offer"
+              className="field"
+            />
+          </div>
+
+          <div>
+            <label className="field-label">Website / email domain</label>
+            <input
+              type="text"
+              value={domain}
+              onChange={(e) => setDomain(e.target.value)}
+              placeholder="example.com or hr@example.com"
+              className="field"
+            />
+          </div>
+
+          <div>
+            <label className="field-label">Pattern type *</label>
+            <div className="flex flex-wrap gap-1.5">
+              {patterns.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setPattern(p)}
+                  className={`px-3 py-1.5 rounded-full text-[12.5px] border transition-colors ${
+                    pattern === p
+                      ? "bg-[var(--ink)] text-[var(--on-ink)] border-[var(--ink)]"
+                      : "bg-[var(--field)] border-transparent text-[var(--ink-2)] hover:border-[var(--line-2)]"
+                  }`}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="flex justify-between">
+              <label className="field-label">What happened?</label>
+              <span className="text-[12px] text-[var(--muted)]">No personal data</span>
+            </div>
+            <textarea
+              rows={4}
+              value={details}
+              onChange={(e) => setDetails(e.target.value)}
+              placeholder="Describe the warning sign without private details."
+              className="field resize-none leading-relaxed"
+            />
+          </div>
+
+          <button type="submit" disabled={submitting} className="btn-dark w-full">
+            {submitting ? "Saving…" : "Save report"}
+            <ArrowUp className="w-4 h-4" />
+          </button>
+
+          {message && (
+            <p
+              className={`text-[12.5px] rounded-[12px] px-3 py-2 ${
+                message.ok ? "bg-[var(--green-soft)] text-[var(--green-fg)]" : "bg-[var(--red-soft)] text-[var(--red-fg)]"
+              }`}
+            >
+              {message.text}
+            </p>
+          )}
+        </form>
+
+        <div className="lg:col-span-7 space-y-4">
+          <div className="card">
+            <div className="flex items-center justify-between">
+              <h2 className="card-title">Recent Reports</h2>
+              <span className="eyebrow">Local records, not a verified blacklist</span>
+            </div>
+
+            <div className="mt-3 max-h-[520px] overflow-y-auto divide-y divide-[var(--line)]">
+              {loading && reports.length === 0 ? (
+                <p className="eyebrow py-6">Loading reports…</p>
+              ) : reports.length === 0 ? (
+                <div className="py-10 text-center">
+                  <p className="text-[15px]">No community reports yet</p>
+                  <p className="eyebrow mt-1">Be the first to flag a suspicious offer.</p>
+                </div>
+              ) : (
+                reports.map((r) => (
+                  <div key={r.id} className="py-4 flex gap-3">
+                    <span className="w-9 h-9 rounded-full bg-[var(--field)] grid place-items-center text-[13px] font-medium shrink-0 uppercase">
+                      {r.company.charAt(0)}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[14px] font-medium truncate">{r.company}</span>
+                        <span className="pill pill-amber !text-[11px] uppercase">{r.status || "Unverified"}</span>
+                      </div>
+                      {r.domain && (
+                        <span className="text-[12px] text-[var(--muted)] font-mono-code inline-flex items-center gap-1 mt-0.5">
+                          <Globe className="w-3 h-3" />
+                          {r.domain}
+                        </span>
+                      )}
+                      {r.details && <p className="text-[13px] text-[var(--ink-2)] leading-snug mt-1.5">{r.details}</p>}
+                      <span className="pill pill-gray !text-[11px] mt-2">{r.pattern}</span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-[20px] bg-[var(--amber-soft)] px-5 py-4">
+            <div className="text-[14px] font-medium text-[var(--amber-title)]">Responsible reporting matters</div>
+            <p className="text-[12.5px] leading-relaxed text-[var(--amber-body)] mt-1">
+              Reports are unverified and may be inaccurate. Do not upload identity documents, phone numbers, bank details,
+              or private correspondence.
             </p>
           </div>
-
-          <form onSubmit={handleSubmit} className="space-y-3.5">
-            <div>
-              <label className="block text-[10px] font-bold text-[#c9d7dc] mb-1">
-                Company / project name *
-              </label>
-              <input
-                type="text"
-                required
-                value={company}
-                onChange={(e) => setCompany(e.target.value)}
-                placeholder="Name shown in the offer"
-                className="w-full bg-[#0b141c] border border-[#2b3b45] rounded-[7px] px-3 py-2 text-[11px] text-[#eaf2f4] outline-none focus:border-[#56ecc088]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-bold text-[#c9d7dc] mb-1">
-                Website / email domain
-              </label>
-              <input
-                type="text"
-                value={domain}
-                onChange={(e) => setDomain(e.target.value)}
-                placeholder="example.com or hr@example.com"
-                className="w-full bg-[#0b141c] border border-[#2b3b45] rounded-[7px] px-3 py-2 text-[11px] text-[#eaf2f4] outline-none focus:border-[#56ecc088]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-bold text-[#c9d7dc] mb-1">
-                Pattern type *
-              </label>
-              <select
-                required
-                value={pattern}
-                onChange={(e) => setPattern(e.target.value)}
-                className="w-full bg-[#0b141c] border border-[#2b3b45] rounded-[7px] px-3 py-2 text-[11px] text-[#eaf2f4] outline-none focus:border-[#56ecc088]"
-              >
-                <option value="">Select a pattern</option>
-                {patterns.length > 0 ? (
-                  patterns.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))
-                ) : (
-                  <>
-                    <option value="Upfront payment demand">Upfront payment demand</option>
-                    <option value="Suspicious link or lookalike domain">Suspicious link or lookalike domain</option>
-                    <option value="Credential / sensitive data request">Credential / sensitive data request</option>
-                    <option value="Fake interview or guaranteed job">Fake interview or guaranteed job</option>
-                    <option value="Impersonation concern">Impersonation concern</option>
-                    <option value="Other suspicious pattern">Other suspicious pattern</option>
-                  </>
-                )}
-              </select>
-            </div>
-
-            <div>
-              <label className="flex justify-between items-center text-[10px] font-bold text-[#c9d7dc] mb-1">
-                <span>What happened?</span>
-                <small className="font-mono-code text-[8px] text-[#70858f]">NO PERSONAL DATA</small>
-              </label>
-              <textarea
-                rows={4}
-                value={details}
-                onChange={(e) => setDetails(e.target.value)}
-                placeholder="Describe the warning sign without private details."
-                className="w-full bg-[#0b141c] border border-[#2b3b45] rounded-[7px] p-3 text-[11px] text-[#eaf2f4] outline-none leading-[1.7] focus:border-[#56ecc088]"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={submitting}
-              className="btn-primary w-full"
-            >
-              <span>{submitting ? "Saving..." : "Save local report"}</span>
-              <span>↗</span>
-            </button>
-
-            {message && (
-              <p className="text-[10px] text-[#56ecc0] leading-[1.6] mt-2">
-                {message}
-              </p>
-            )}
-          </form>
         </div>
-
-        {/* Right Column: Feed */}
-        <div className="bg-[#111b25] border border-[#263640] rounded-[10px] p-5">
-          <div className="flex items-start justify-between gap-3 mb-4">
-            <div>
-              <small className="font-mono-code text-[9px] tracking-[1.2px] text-[#718d98] block">
-                COMMUNITY SIGNALS
-              </small>
-              <h2 className="text-[16px] font-bold text-[#eef6f7] mt-1 mb-0.5 tracking-tight">
-                Recent reports
-              </h2>
-              <p className="text-[10px] text-[#879ba4] leading-[1.6] m-0">
-                Local demo records, not a verified blacklist.
-              </p>
-            </div>
-            <button
-              onClick={fetchReports}
-              className="btn-secondary text-[12px] px-2.5 py-1"
-            >
-              ↻
-            </button>
-          </div>
-
-          <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
-            {loading ? (
-              <p className="text-[10px] text-[#81949d]">Loading reports...</p>
-            ) : reports.length === 0 ? (
-              <p className="text-[10px] text-[#81949d]">No community reports recorded yet.</p>
-            ) : (
-              reports.map((r, idx) => (
-                <div
-                  key={idx}
-                  className="p-3 border border-[#2b3b44] bg-[#0e1820] rounded-[7px]"
-                >
-                  <div className="flex justify-between items-start gap-2">
-                    <b className="text-[11px] text-[#eef6f7]">{r.company}</b>
-                    <span className="font-mono-code text-[8px] text-[#f3c46c] border border-[#5a4a2e] rounded-[3px] px-1.5 py-0.5 whitespace-nowrap uppercase">
-                      {r.status || "UNVERIFIED"}
-                    </span>
-                  </div>
-
-                  {r.domain && (
-                    <span className="font-mono-code text-[9px] text-[#8ea2ab] block mt-0.5">
-                      {r.domain}
-                    </span>
-                  )}
-
-                  <p className="text-[9.5px] text-[#91a2ab] leading-[1.6] my-2">
-                    {r.details || `Pattern: ${r.pattern}`}
-                  </p>
-
-                  <small className="font-mono-code text-[8px] text-[#6f838d] block text-right">
-                    Pattern: {r.pattern}
-                  </small>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Ethics Callout Box from previous theme */}
-      <div className="mt-4 border border-[#51442c] bg-[#211d16] rounded-[8px] p-3.5">
-        <b className="text-[10.5px] text-[#f0d08c] block">
-          ⚑ &nbsp;Responsible reporting matters
-        </b>
-        <p className="text-[10px] leading-[1.7] text-[#baa982] mt-1 mb-0">
-          Reports are unverified and may be inaccurate. Do not upload identity documents, phone numbers, bank details, or private correspondence.
-        </p>
       </div>
     </div>
   );
