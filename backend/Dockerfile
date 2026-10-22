@@ -16,4 +16,6 @@ ENV CYBERSHIELD_DB_PATH=/data/cybershield.db
 VOLUME ["/data"]
 
 EXPOSE 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Hosts like Render set $PORT. Proxy headers let rate limits and reporter
+# fingerprints see the visitor's IP instead of the platform's load balancer.
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'"]

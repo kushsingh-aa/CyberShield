@@ -1,0 +1,31 @@
+# Render Blueprint for the CyberShield API (frontend is deployed on Vercel)
+services:
+  - type: web
+    name: cybershield-api
+    runtime: docker
+    plan: free
+    branch: main
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    healthCheckPath: /
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - backend/**
+    envVars:
+      # Set to your Vercel URL, e.g. https://cybershield.vercel.app (comma-separate several)
+      - key: CORS_ORIGINS
+        sync: false
+      - key: REPORT_SALT
+        generateValue: true
+      # Optional AI / threat-intel keys; leave blank to run on the rule engine only
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SAFE_BROWSING_KEY
+        sync: false
+      - key: VIRUSTOTAL_API_KEY
+        sync: false
