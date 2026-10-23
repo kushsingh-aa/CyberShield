@@ -94,5 +94,13 @@
     "title": "Remote-Access Software Requested",
     "detail": "The message asks you to install remote-access software, which gives the sender control of your device and banking apps.",
     "advice": "Never install AnyDesk, TeamViewer or similar tools for a job process. Uninstall it if already installed and change your banking passwords."
+  },
+  {
+    "key": "unauthorized_fake",
+    "points": 85,
+    "pattern": "\\b(simulated test document|fictional company|not a valid employment offer|not a real internship offer|synthetic test sample|synthetic document|synthetic internship offer|unauthorized employment|unauthorized offer|not valid for employment|fictional sample|fictional entity|no real person has authorized)\\b",
+    "title": "Unauthorized / Fictional Offer Document",
+    "detail": "The document contains disclaimers or watermarks indicating it is a simulated test document, fictional company, synthetic sample, or not a valid authorized employment offer.",
+    "advice": "This document is an unauthorized, simulated, or fictional offer. Do not treat it as a valid employment offer or share personal/banking information."
   }
 ]

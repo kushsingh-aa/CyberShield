@@ -5,6 +5,8 @@ def get_next_steps(level: str, letter: dict, comp: dict) -> List[str]:
     steps = []
 
     if level == "high":
+        if letter.get("unauthorized"):
+            steps.append("DO NOT treat this as a valid employment contract: document detected as unauthorized or simulated.")
         steps.append("DO NOT send any money, registration fees, security deposits, or laptop charges.")
         steps.append("Do not click links to enter banking credentials, OTPs, or UPI passwords.")
         steps.append("Do not surrender original educational certificates or marks cards.")
@@ -28,7 +30,7 @@ def build_score(letter: dict, comp: dict, rep: dict) -> Dict[str, Any]:
     - Letter Check (45% weight)
     - Company / Domain Check (35% weight)
     - Student Community Reports (20% weight)
-    With hard override: Upfront fee demand or 3+ independent reports raises score to >= 70 (HIGH).
+    With hard override: Upfront fee demand, unauthorized/fictional document, or 3+ independent reports.
     """
     s_letter = min(100, sum(e["points"] for e in letter.get("evidence", [])))
     s_comp = min(100, sum(e["points"] for e in comp.get("evidence", [])))
@@ -36,12 +38,15 @@ def build_score(letter: dict, comp: dict, rep: dict) -> Dict[str, Any]:
 
     final = round(0.45 * s_letter + 0.35 * s_comp + 0.20 * s_rep)
 
-    # Mandatory security override: fee demanded or multiple community reports
+    # Mandatory security override: fee demanded, unauthorized document, or multiple community reports
     fees_demanded = letter.get("fees", False)
+    unauthorized = letter.get("unauthorized", False)
     multiple_reports = rep.get("independent_reports", 0) >= 3
 
     if fees_demanded or multiple_reports:
         final = max(final, 75)
+    if unauthorized:
+        final = max(final, 85)
 
     final = max(0, min(100, final))
 
@@ -55,7 +60,7 @@ def build_score(letter: dict, comp: dict, rep: dict) -> Dict[str, Any]:
         badge_color = "amber"
     else:
         level = "high"
-        badge_label = "High Scam Risk"
+        badge_label = "Unauthorized / High Risk" if unauthorized else "High Scam Risk"
         badge_color = "rose"
 
     all_evidence = letter.get("evidence", []) + comp.get("evidence", []) + rep.get("evidence", [])

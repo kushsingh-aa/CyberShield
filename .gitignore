@@ -34,4 +34,5 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 
-.venv/
+.venv*/
+backend/.venv*/

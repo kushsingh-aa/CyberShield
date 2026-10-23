@@ -59,11 +59,13 @@ RULES = _load_rules()
 
 # Rule keys that count as a demand for money (triggers the high-risk override)
 FEE_RULE_KEYS = {"upfront_fee", "upi_payment"}
+UNAUTHORIZED_RULE_KEYS = {"unauthorized_fake"}
 
 def run_regex_rules(text: str) -> dict:
     """Executes fallback rule-based pattern matching on offer letter text."""
     evidence = []
     fees_demanded = False
+    unauthorized = False
     seen = set()
 
     for key, pts, pattern, title, detail, advice in RULES:
@@ -81,6 +83,8 @@ def run_regex_rules(text: str) -> dict:
             seen.add(key)
             if key in FEE_RULE_KEYS:
                 fees_demanded = True
+            if key in UNAUTHORIZED_RULE_KEYS:
+                unauthorized = True
             evidence.append({
                 "source": "Letter Analysis (Rules)",
                 "key": key,
@@ -94,6 +98,7 @@ def run_regex_rules(text: str) -> dict:
     return {
         "evidence": evidence,
         "fees_demanded": fees_demanded,
+        "unauthorized": unauthorized,
         "total_points": sum(e["points"] for e in evidence)
     }
 
@@ -171,7 +176,7 @@ def _parse_findings(raw: str) -> Optional[dict]:
         return None
 
 
-GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"]
+GEMINI_MODELS = ["gemini-3.5-flash", "gemini-3.8-flash", "gemini-flash-latest", "gemini-2.5-flash"]
 CLAUDE_MODEL = "claude-opus-5-5"
 OPENROUTER_MODELS = [
     "minimax/minimax-m3.1-flash:free",
@@ -323,6 +328,7 @@ async def analyze_letter(text: str, api_key: Optional[str] = None) -> dict:
 
     evidence = list(rule_results["evidence"])
     fees_flag = rule_results["fees_demanded"]
+    unauthorized_flag = rule_results.get("unauthorized", False)
 
     if llm_results:
         ai_model_name = llm_results.get("model", "AI Semantic Engine")
@@ -407,8 +413,22 @@ async def analyze_letter(text: str, api_key: Optional[str] = None) -> dict:
                     "advice": "Review this clause with a mentor or placement cell officer before signing."
                 })
 
+        # 8. Fake / Unauthorized Characteristics
+        for fake in llm_results.get("fake_looking_details", []):
+            if fake and len(fake.strip()) > 5:
+                unauthorized_flag = True
+                evidence.append({
+                    "source": source_label,
+                    "key": "ai_unauthorized_fake",
+                    "points": 35,
+                    "title": "AI Identified Unauthorized / Fake Document Markers",
+                    "detail": fake.strip(),
+                    "advice": "This document contains characteristics of an unauthorized or simulated offer. Do not trust it."
+                })
+
     return {
         "evidence": evidence,
         "fees": fees_flag,
+        "unauthorized": unauthorized_flag,
         "llm_insight": llm_results
     }
